@@ -71,11 +71,15 @@ jobs:
           SUB: ${{ inputs.subscription-id }}
         run: |
           stack_id="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Resources/deploymentStacks/$STACK"
+          # Stack what-if checks write permission on every resource by default. The preview identity
+          # is read-only (Reader plus What-If Runner), so check read permission instead:
+          # https://learn.microsoft.com/azure/azure-resource-manager/bicep/deployment-stacks-what-if
           az stack-whatif group create \
             --name "whatif-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
             --resource-group "$RG" --stack-id "$stack_id" \
             --template-file "$TEMPLATE" --parameters "$PARAMS" \
             --action-on-unmanage deleteResources --deny-settings-mode none \
+            --validation-level ProviderNoRbac \
             --retention-interval PT1H | tee whatif.txt
           {
             echo "### What-if: \`$STACK\` in \`$RG\`"
