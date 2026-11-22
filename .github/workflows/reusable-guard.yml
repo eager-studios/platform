@@ -1,0 +1,68 @@
+# reusable-guard.yml — GitHub's version of a self-mutating pipeline's safety stage.
+# GitHub always runs the workflow files from the commit being built, so a pipeline edit is live
+# the moment it is pushed; there is nothing to "update". What this keeps from the ADO pattern:
+# a push that changes .github/ is linted, and callers skip their deploy jobs for that run,
+# so a pipeline edit never ships application code in the same breath.
+name: guard
+
+on:
+  workflow_call:
+    outputs:
+      pipeline-changed:
+        description: "'true' when the push or PR touches .github/"
+        value: ${{ jobs.classify.outputs.pipeline }}
+      infra-changed:
+        description: "'true' when infra/ changed"
+        value: ${{ jobs.classify.outputs.infra }}
+      app-changed:
+        description: "'true' when application code changed"
+        value: ${{ jobs.classify.outputs.app }}
+
+permissions:
+  contents: read
+
+jobs:
+  classify:
+    runs-on: ubuntu-latest
+    outputs:
+      pipeline: ${{ steps.diff.outputs.pipeline }}
+      infra: ${{ steps.diff.outputs.infra }}
+      app: ${{ steps.diff.outputs.app }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: diff
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          if [ -z "$BASE" ] || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "No usable base commit (first push or force-push); treating every file as changed."
+            git ls-files > changed-files.txt
+          else
+            git diff --name-only "$BASE" HEAD > changed-files.txt
+          fi
+          has() { if grep -Eq "$1" changed-files.txt; then echo true; else echo false; fi; }
+          {
+            echo "pipeline=$(has '^\.github/')"
+            echo "infra=$(has '^infra/')"
+            echo "app=$(has '^(src|web|db|tests|mobile)/')"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Lint workflow changes
+        if: steps.diff.outputs.pipeline == 'true'
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color
+
+      - name: Explain the held deploy
+        if: steps.diff.outputs.pipeline == 'true' && github.event_name == 'push'
+        run: |
+          {
+            echo "### Pipeline change detected"
+            echo "This push changes files under .github/. The new pipeline passed lint and is now live,"
+            echo "but this run's deploy jobs are skipped so a pipeline edit never ships application code."
+            echo "The next push, or a manual run (Run workflow), deploys with the new pipeline."
+          } >> "$GITHUB_STEP_SUMMARY"

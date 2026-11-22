@@ -1,0 +1,102 @@
+# reusable-web.yml — build a Vite app with per-environment settings; optionally deploy it to
+# Static Web Apps. The deployment token is read at run time with the pipeline's identity,
+# so it is never stored as a GitHub secret.
+name: web
+
+on:
+  workflow_call:
+    inputs:
+      working-directory:
+        type: string
+        default: web
+      node-version:
+        type: string
+        default: "26"
+      vite-env:
+        description: "Newline-separated VITE_* settings baked into the build (not secrets)"
+        type: string
+        default: ""
+      deploy:
+        type: boolean
+        default: false
+      environment:
+        type: string
+        default: ""
+      static-web-app:
+        type: string
+        default: ""
+      resource-group:
+        type: string
+        default: ""
+      client-id:
+        type: string
+        default: ""
+      tenant-id:
+        type: string
+        default: ""
+      subscription-id:
+        type: string
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+          cache-dependency-path: ${{ inputs.working-directory }}/package-lock.json
+      - run: npm ci
+      - run: npm test --if-present
+      - name: Build
+        env:
+          VITE_ENV: ${{ inputs.vite-env }}
+        run: |
+          printf '%s\n' "$VITE_ENV" > .env.production.local
+          npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist-${{ github.run_attempt }}
+          path: ${{ inputs.working-directory }}/dist
+
+  deploy:
+    if: inputs.deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist-${{ github.run_attempt }}
+          path: dist
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ inputs.client-id }}
+          tenant-id: ${{ inputs.tenant-id }}
+          subscription-id: ${{ inputs.subscription-id }}
+      - name: Read the deployment token
+        env:
+          SWA: ${{ inputs.static-web-app }}
+          RG: ${{ inputs.resource-group }}
+        run: |
+          token=$(az staticwebapp secrets list --name "$SWA" --resource-group "$RG" --query properties.apiKey --output tsv)
+          echo "::add-mask::$token"
+          echo "SWA_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: Upload to Static Web Apps
+        uses: Azure/static-web-apps-deploy@v1
+        with:
+          azure_static_web_apps_api_token: ${{ env.SWA_TOKEN }}
+          action: upload
+          app_location: dist
+          skip_app_build: true
+          skip_api_build: true

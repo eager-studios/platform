@@ -1,0 +1,93 @@
+# reusable-db-migrate.yml — apply numbered SQL migrations to one app database.
+# The runner's IP is allowed through the PostgreSQL firewall only for the length of the job,
+# and it signs in with an Entra token, not a password.
+name: db-migrate
+
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      migrator-project:
+        description: "Path to the DbUp console app .csproj"
+        type: string
+        required: true
+      database:
+        type: string
+        required: true
+      db-user:
+        description: "PostgreSQL role: the deploy identity's name"
+        type: string
+        required: true
+      server-name:
+        description: "PostgreSQL flexible server name (without .postgres.database.azure.com)"
+        type: string
+        required: true
+      server-resource-group:
+        type: string
+        required: true
+      dotnet-version:
+        type: string
+        default: "10.0.x"
+      client-id:
+        type: string
+        required: true
+      tenant-id:
+        type: string
+        required: true
+      subscription-id:
+        type: string
+        required: true
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: migrate-${{ inputs.database }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+    env:
+      SERVER: ${{ inputs.server-name }}
+      RG: ${{ inputs.server-resource-group }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ inputs.client-id }}
+          tenant-id: ${{ inputs.tenant-id }}
+          subscription-id: ${{ inputs.subscription-id }}
+
+      - name: Open the firewall for this runner
+        id: fw
+        run: |
+          ip=$(curl -sSf https://api.ipify.org)
+          rule="gh-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          az postgres flexible-server firewall-rule create --resource-group "$RG" --name "$SERVER" \
+            --rule-name "$rule" --start-ip-address "$ip" --end-ip-address "$ip" --output none
+          echo "rule=$rule" >> "$GITHUB_OUTPUT"
+
+      - name: Run migrations
+        env:
+          PROJECT: ${{ inputs.migrator-project }}
+          DB: ${{ inputs.database }}
+          DB_USER: ${{ inputs.db-user }}
+        run: |
+          token=$(az account get-access-token --resource-type oss-rdbms --query accessToken --output tsv)
+          echo "::add-mask::$token"
+          export MIGRATOR_CONNECTION="Host=$SERVER.postgres.database.azure.com;Database=$DB;Username=$DB_USER;Password=$token;SSL Mode=Require"
+          dotnet run --project "$PROJECT" --configuration Release
+
+      - name: Close the firewall
+        if: always() && steps.fw.outputs.rule != ''
+        env:
+          RULE: ${{ steps.fw.outputs.rule }}
+        run: |
+          az postgres flexible-server firewall-rule delete --resource-group "$RG" --name "$SERVER" \
+            --rule-name "$RULE" --yes --output none

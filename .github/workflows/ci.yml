@@ -1,0 +1,27 @@
+# ci.yml — this repo is a public library, so its own pipeline only checks itself:
+# compile every Bicep module and lint every workflow. It never signs in to Azure.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Bicep modules
+        run: |
+          for f in $(git ls-files 'bicep/*.bicep'); do
+            az bicep build --file "$f" --outfile "$RUNNER_TEMP/template.json"
+            echo "ok  $f"
+          done
+      - name: Lint workflows
+        run: |
+          bash <(curl -sSfL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          ./actionlint -color

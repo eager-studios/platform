@@ -1,0 +1,53 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(az bicep build *)",
+      "Bash(az bicep build-params *)",
+      "Bash(az bicep lint *)",
+      "Bash(az account show *)",
+      "Bash(actionlint *)",
+      "Bash(gh run list *)",
+      "Bash(gh run view *)",
+      "Bash(gh pr view *)",
+      "Bash(gh pr checks *)",
+      "Bash(gh pr diff *)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git switch *)",
+      "Bash(git checkout -b *)"
+    ],
+    "ask": [
+      "Bash(az deployment *)",
+      "Bash(az stack *)",
+      "Bash(az stack-whatif *)",
+      "Bash(az ad *)",
+      "Bash(az rest *)",
+      "Bash(az role *)",
+      "Bash(az identity *)",
+      "Bash(az postgres *)",
+      "Bash(az functionapp *)",
+      "Bash(az staticwebapp *)",
+      "Bash(az group *)",
+      "Bash(gh api *)",
+      "Bash(gh variable *)",
+      "Bash(gh secret *)",
+      "Bash(gh repo *)",
+      "Bash(gh release *)",
+      "Bash(gh workflow run *)",
+      "Bash(gh pr merge *)",
+      "Bash(git push *)",
+      "Bash(git tag *)",
+      "Bash(psql *)"
+    ],
+    "deny": [
+      "Bash(az group delete *)",
+      "Bash(az stack group delete *)",
+      "Bash(az stack sub delete *)",
+      "Bash(gh repo delete *)",
+      "Bash(git push --force *)",
+      "Bash(git push -f *)",
+      "Bash(git push origin --force *)",
+      "Bash(git reset --hard *)"
+    ]
+  }
+}

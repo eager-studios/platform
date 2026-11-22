@@ -1,0 +1,128 @@
+# reusable-bicep.yml — preview (what-if) or apply a Bicep deployment stack in one resource group.
+# preview: runs without a GitHub environment, so it signs in as the read-only PR identity.
+# apply:   runs in the named environment, so it signs in as that environment's infra identity.
+name: bicep
+
+on:
+  workflow_call:
+    inputs:
+      mode:
+        description: "preview or apply"
+        type: string
+        required: true
+      environment:
+        description: "GitHub environment for apply (dev, prod, platform)"
+        type: string
+        default: ""
+      resource-group:
+        type: string
+        required: true
+      stack-name:
+        type: string
+        required: true
+      template:
+        description: "Path to main.bicep in the calling repo"
+        type: string
+        required: true
+      parameters:
+        description: "Path to the .bicepparam file"
+        type: string
+        required: true
+      platform-ref:
+        description: "Tag or SHA of the platform repo whose modules to use"
+        type: string
+        default: v1
+      client-id:
+        type: string
+        required: true
+      tenant-id:
+        type: string
+        required: true
+      subscription-id:
+        type: string
+        required: true
+
+jobs:
+  preview:
+    if: inputs.mode == 'preview'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out platform modules
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/platform
+          ref: ${{ inputs.platform-ref }}
+          path: .platform
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ inputs.client-id }}
+          tenant-id: ${{ inputs.tenant-id }}
+          subscription-id: ${{ inputs.subscription-id }}
+      - name: What-if against the deployment stack
+        env:
+          RG: ${{ inputs.resource-group }}
+          STACK: ${{ inputs.stack-name }}
+          TEMPLATE: ${{ inputs.template }}
+          PARAMS: ${{ inputs.parameters }}
+          SUB: ${{ inputs.subscription-id }}
+        run: |
+          stack_id="/subscriptions/$SUB/resourceGroups/$RG/providers/Microsoft.Resources/deploymentStacks/$STACK"
+          az stack-whatif group create \
+            --name "whatif-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" \
+            --resource-group "$RG" --stack-id "$stack_id" \
+            --template-file "$TEMPLATE" --parameters "$PARAMS" \
+            --action-on-unmanage deleteResources --deny-settings-mode none \
+            --retention-interval PT1H | tee whatif.txt
+          {
+            echo "### What-if: \`$STACK\` in \`$RG\`"
+            echo '```'
+            cat whatif.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  apply:
+    if: inputs.mode == 'apply'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: stack-${{ inputs.resource-group }}-${{ inputs.stack-name }}
+      cancel-in-progress: false
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check out platform modules
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/platform
+          ref: ${{ inputs.platform-ref }}
+          path: .platform
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ inputs.client-id }}
+          tenant-id: ${{ inputs.tenant-id }}
+          subscription-id: ${{ inputs.subscription-id }}
+      - name: Apply the deployment stack
+        env:
+          RG: ${{ inputs.resource-group }}
+          STACK: ${{ inputs.stack-name }}
+          TEMPLATE: ${{ inputs.template }}
+          PARAMS: ${{ inputs.parameters }}
+        run: |
+          # deleteResources: a resource removed from the Bicep is deleted from Azure, so code stays the truth
+          az stack group create \
+            --name "$STACK" --resource-group "$RG" \
+            --template-file "$TEMPLATE" --parameters "$PARAMS" \
+            --action-on-unmanage deleteResources --deny-settings-mode none \
+            --yes --output none
+          {
+            echo "### Applied \`$STACK\` to \`$RG\`"
+            echo '```json'
+            az stack group show --name "$STACK" --resource-group "$RG" --query outputs --output json
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

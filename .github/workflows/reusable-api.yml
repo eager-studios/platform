@@ -1,0 +1,80 @@
+# reusable-api.yml — build and test a .NET isolated Function App; optionally deploy it.
+name: api
+
+on:
+  workflow_call:
+    inputs:
+      project:
+        description: "Path to the Function App .csproj"
+        type: string
+        required: true
+      test-project:
+        description: "Path to the test .csproj; empty skips tests"
+        type: string
+        default: ""
+      dotnet-version:
+        type: string
+        default: "10.0.x"
+      deploy:
+        type: boolean
+        default: false
+      environment:
+        type: string
+        default: ""
+      function-app:
+        type: string
+        default: ""
+      client-id:
+        type: string
+        default: ""
+      tenant-id:
+        type: string
+        default: ""
+      subscription-id:
+        type: string
+        default: ""
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ inputs.dotnet-version }}
+      - name: Test
+        if: inputs.test-project != ''
+        run: dotnet test "${{ inputs.test-project }}" --configuration Release
+      - name: Publish
+        run: dotnet publish "${{ inputs.project }}" --configuration Release --output publish
+      - uses: actions/upload-artifact@v4
+        with:
+          name: api-package-${{ github.run_attempt }}
+          path: publish
+          include-hidden-files: true
+
+  deploy:
+    if: inputs.deploy
+    needs: build
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: api-package-${{ github.run_attempt }}
+          path: publish
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ inputs.client-id }}
+          tenant-id: ${{ inputs.tenant-id }}
+          subscription-id: ${{ inputs.subscription-id }}
+      - name: Deploy to Flex Consumption
+        uses: Azure/functions-action@v1
+        with:
+          app-name: ${{ inputs.function-app }}
+          package: publish
